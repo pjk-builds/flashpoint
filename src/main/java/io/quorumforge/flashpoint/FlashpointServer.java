@@ -12,12 +12,14 @@ final class FlashpointServer implements AutoCloseable {
     private static final byte[] HEALTH_RESPONSE = "{\"status\":\"UP\"}".getBytes(StandardCharsets.UTF_8);
 
     private final Inventory inventory = new Inventory();
+    private final OrderService orders = new OrderService(inventory);
     private final HttpServer server;
 
     FlashpointServer(int port) throws IOException {
         server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/health", this::handleHealth);
         server.createContext("/inventory", this::handleInventory);
+        server.createContext("/orders", this::handleOrders);
     }
 
     void start() {
@@ -76,6 +78,34 @@ final class FlashpointServer implements AutoCloseable {
 
         exchange.getResponseHeaders().set("Allow", "GET, PUT");
         respond(exchange, 405, "{\"error\":\"method not allowed\"}", "application/json; charset=utf-8");
+    }
+
+    private void handleOrders(HttpExchange exchange) throws IOException {
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Allow", "POST");
+            respond(exchange, 405, "{\"error\":\"method not allowed\"}", "application/json; charset=utf-8");
+            return;
+        }
+
+        try {
+            Map<String, String> request = body(exchange);
+            OrderService.Order order = orders.place(
+                exchange.getRequestHeaders().getFirst("Idempotency-Key"),
+                request.get("sku"),
+                positiveInt(request.get("quantity")));
+            String response = "{\"orderId\":" + Json.quote(order.orderId())
+                + ",\"sku\":" + Json.quote(order.sku())
+                + ",\"quantity\":" + order.quantity()
+                + ",\"status\":" + Json.quote(order.status().name()) + "}";
+            int status = order.status() == OrderService.Status.ACCEPTED ? 201 : 409;
+            respond(exchange, status, response, "application/json; charset=utf-8");
+        } catch (OrderService.IdempotencyConflict error) {
+            respond(exchange, 409, "{\"error\":" + Json.quote(error.getMessage()) + "}",
+                "application/json; charset=utf-8");
+        } catch (IllegalArgumentException error) {
+            respond(exchange, 400, "{\"error\":" + Json.quote(error.getMessage()) + "}",
+                "application/json; charset=utf-8");
+        }
     }
 
     private static Map<String, String> body(HttpExchange exchange) throws IOException {

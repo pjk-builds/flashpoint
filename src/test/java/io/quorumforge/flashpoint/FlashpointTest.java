@@ -50,6 +50,26 @@ public final class FlashpointTest {
                 inventory.disconnect();
             }
             check(inventoryBody.equals("{\"console\":3}"), "unexpected inventory response: " + inventoryBody);
+
+            HttpURLConnection order = connection(baseUrl + "/orders", "POST");
+            order.setDoOutput(true);
+            order.setRequestProperty("Content-Type", "application/json");
+            order.setRequestProperty("Idempotency-Key", "demo-order-1");
+            try (OutputStream requestBody = order.getOutputStream()) {
+                requestBody.write("{\"sku\":\"console\",\"quantity\":1}".getBytes(StandardCharsets.UTF_8));
+            }
+            check(order.getResponseCode() == 201, "expected order status 201");
+            order.disconnect();
+
+            HttpURLConnection replay = connection(baseUrl + "/orders", "POST");
+            replay.setDoOutput(true);
+            replay.setRequestProperty("Content-Type", "application/json");
+            replay.setRequestProperty("Idempotency-Key", "demo-order-1");
+            try (OutputStream requestBody = replay.getOutputStream()) {
+                requestBody.write("{\"sku\":\"console\",\"quantity\":1}".getBytes(StandardCharsets.UTF_8));
+            }
+            check(replay.getResponseCode() == 201, "replayed order should return 201");
+            replay.disconnect();
         }
         System.out.println("PASS: health endpoint integration test");
     }
