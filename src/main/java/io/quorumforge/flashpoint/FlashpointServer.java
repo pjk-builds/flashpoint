@@ -95,7 +95,10 @@ final class FlashpointServer implements AutoCloseable {
     }
 
     private static void respond(HttpExchange exchange, int status, byte[] body) throws IOException {
-        respond(exchange, status, body, "application/octet-stream");
+        exchange.sendResponseHeaders(status, body.length);
+        try (var responseBody = exchange.getResponseBody()) {
+            responseBody.write(body);
+        }
     }
 
     private static void respond(HttpExchange exchange, int status, String body, String contentType) throws IOException {
@@ -104,9 +107,6 @@ final class FlashpointServer implements AutoCloseable {
 
     private static void respond(HttpExchange exchange, int status, byte[] body, String contentType) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.sendResponseHeaders(status, body.length);
-        try (var responseBody = exchange.getResponseBody()) {
-            responseBody.write(body);
-        }
+        respond(exchange, status, body);
     }
 }
