@@ -7,16 +7,31 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Semaphore;
 
 final class FlashpointServer implements AutoCloseable {
     private static final byte[] HEALTH_RESPONSE = "{\"status\":\"UP\"}".getBytes(StandardCharsets.UTF_8);
 
     private final Inventory inventory = new Inventory();
     private final OrderService orders = new OrderService(inventory);
+    private final TokenBucket rateLimiter;
+    private final Semaphore capacity;
+    private final ExecutorService executor;
     private final HttpServer server;
 
     FlashpointServer(int port) throws IOException {
-        server = HttpServer.create(new InetSocketAddress(port), 0);
+        this(port, 5_000, 1_000, 64);
+    }
+
+    FlashpointServer(int port, int requestsPerSecond, int burst, int maxInFlight) throws IOException {
+        if (maxInFlight < 1) throw new IllegalArgumentException("max in-flight must be positive");
+        rateLimiter = new TokenBucket(requestsPerSecond, burst);
+        capacity = new Semaphore(maxInFlight);
+        executor = Executors.newFixedThreadPool(maxInFlight);
+        server = HttpServer.create(new InetSocketAddress(port), 256);
+        server.setExecutor(executor);
         server.createContext("/health", this::handleHealth);
         server.createContext("/inventory", this::handleInventory);
         server.createContext("/orders", this::handleOrders);
@@ -33,6 +48,7 @@ final class FlashpointServer implements AutoCloseable {
     @Override
     public void close() {
         server.stop(0);
+        executor.shutdownNow();
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
@@ -87,6 +103,15 @@ final class FlashpointServer implements AutoCloseable {
             return;
         }
 
+        if (!rateLimiter.tryAcquire()) {
+            respond(exchange, 429, "{\"error\":\"request rate exceeded\"}", "application/json; charset=utf-8");
+            return;
+        }
+        if (!capacity.tryAcquire()) {
+            respond(exchange, 503, "{\"error\":\"server at capacity\"}", "application/json; charset=utf-8");
+            return;
+        }
+
         try {
             Map<String, String> request = body(exchange);
             OrderService.Order order = orders.place(
@@ -105,6 +130,8 @@ final class FlashpointServer implements AutoCloseable {
         } catch (IllegalArgumentException error) {
             respond(exchange, 400, "{\"error\":" + Json.quote(error.getMessage()) + "}",
                 "application/json; charset=utf-8");
+        } finally {
+            capacity.release();
         }
     }
 
