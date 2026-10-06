@@ -39,6 +39,10 @@ final class OrderService {
         });
     }
 
+    int orderCount() {
+        return ordersByKey.size();
+    }
+
     static final class IdempotencyConflict extends RuntimeException {
         IdempotencyConflict(String message) {
             super(message);

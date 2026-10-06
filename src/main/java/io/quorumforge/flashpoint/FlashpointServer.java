@@ -16,8 +16,10 @@ final class FlashpointServer implements AutoCloseable {
 
     private final Inventory inventory = new Inventory();
     private final OrderService orders = new OrderService(inventory);
+    private final Metrics metrics = new Metrics();
     private final TokenBucket rateLimiter;
     private final Semaphore capacity;
+    private final int maxInFlight;
     private final ExecutorService executor;
     private final HttpServer server;
 
@@ -27,6 +29,7 @@ final class FlashpointServer implements AutoCloseable {
 
     FlashpointServer(int port, int requestsPerSecond, int burst, int maxInFlight) throws IOException {
         if (maxInFlight < 1) throw new IllegalArgumentException("max in-flight must be positive");
+        this.maxInFlight = maxInFlight;
         rateLimiter = new TokenBucket(requestsPerSecond, burst);
         capacity = new Semaphore(maxInFlight);
         executor = Executors.newFixedThreadPool(maxInFlight);
@@ -35,6 +38,7 @@ final class FlashpointServer implements AutoCloseable {
         server.createContext("/health", this::handleHealth);
         server.createContext("/inventory", this::handleInventory);
         server.createContext("/orders", this::handleOrders);
+        server.createContext("/metrics", this::handleMetrics);
     }
 
     void start() {
@@ -97,6 +101,7 @@ final class FlashpointServer implements AutoCloseable {
     }
 
     private void handleOrders(HttpExchange exchange) throws IOException {
+        long started = System.nanoTime();
         if (!"POST".equals(exchange.getRequestMethod())) {
             exchange.getResponseHeaders().set("Allow", "POST");
             respond(exchange, 405, "{\"error\":\"method not allowed\"}", "application/json; charset=utf-8");
@@ -104,10 +109,14 @@ final class FlashpointServer implements AutoCloseable {
         }
 
         if (!rateLimiter.tryAcquire()) {
+            metrics.increment("rate_limited");
+            metrics.observe(System.nanoTime() - started);
             respond(exchange, 429, "{\"error\":\"request rate exceeded\"}", "application/json; charset=utf-8");
             return;
         }
         if (!capacity.tryAcquire()) {
+            metrics.increment("overloaded");
+            metrics.observe(System.nanoTime() - started);
             respond(exchange, 503, "{\"error\":\"server at capacity\"}", "application/json; charset=utf-8");
             return;
         }
@@ -123,16 +132,32 @@ final class FlashpointServer implements AutoCloseable {
                 + ",\"quantity\":" + order.quantity()
                 + ",\"status\":" + Json.quote(order.status().name()) + "}";
             int status = order.status() == OrderService.Status.ACCEPTED ? 201 : 409;
+            metrics.increment(order.status().name().toLowerCase());
             respond(exchange, status, response, "application/json; charset=utf-8");
         } catch (OrderService.IdempotencyConflict error) {
+            metrics.increment("idempotency_conflict");
             respond(exchange, 409, "{\"error\":" + Json.quote(error.getMessage()) + "}",
                 "application/json; charset=utf-8");
         } catch (IllegalArgumentException error) {
+            metrics.increment("invalid");
             respond(exchange, 400, "{\"error\":" + Json.quote(error.getMessage()) + "}",
                 "application/json; charset=utf-8");
         } finally {
             capacity.release();
+            metrics.observe(System.nanoTime() - started);
         }
+    }
+
+    private void handleMetrics(HttpExchange exchange) throws IOException {
+        if (!"GET".equals(exchange.getRequestMethod())) {
+            exchange.getResponseHeaders().set("Allow", "GET");
+            respond(exchange, 405, "{\"error\":\"method not allowed\"}", "application/json; charset=utf-8");
+            return;
+        }
+        int totalInventory = inventory.snapshot().values().stream().mapToInt(Integer::intValue).sum();
+        String output = metrics.prometheus(
+            maxInFlight - capacity.availablePermits(), totalInventory, orders.orderCount());
+        respond(exchange, 200, output, "text/plain; version=0.0.4");
     }
 
     private static Map<String, String> body(HttpExchange exchange) throws IOException {
