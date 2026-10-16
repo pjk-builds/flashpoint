@@ -1,7 +1,7 @@
 MAIN_SOURCES := $(shell find src/main/java -name '*.java')
 TEST_SOURCES := $(shell find src/test/java -name '*.java')
 
-.PHONY: build run test load clean
+.PHONY: build run test load demo clean
 
 build:
 	@mkdir -p build/main
@@ -17,6 +17,9 @@ test: build
 
 load: test
 	java -cp build/main:build/test io.quorumforge.flashpoint.LoadGenerator 10000 100
+
+demo:
+	./scripts/demo.sh
 
 clean:
 	rm -rf build
