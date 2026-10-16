@@ -62,6 +62,19 @@ make demo
 
 The demo restocks inventory, creates an order, replays the same request with the same idempotency key, and prints inventory and metrics.
 
+## Run with Docker Compose
+
+The container runs as a non-root user and binds to localhost by default:
+
+```bash
+make docker-build
+make docker-up
+curl http://localhost:8080/health
+make docker-down
+```
+
+The current service stores inventory and idempotency state in memory. Recreating the container resets that state; persistent storage is part of the PostgreSQL milestone.
+
 ## Load testing
 
 Start the service first, then run:

@@ -1,7 +1,7 @@
 MAIN_SOURCES := $(shell find src/main/java -name '*.java')
 TEST_SOURCES := $(shell find src/test/java -name '*.java')
 
-.PHONY: build run test load demo clean
+.PHONY: build run test load demo docker-build docker-up docker-down clean
 
 build:
 	@mkdir -p build/main
@@ -20,6 +20,15 @@ load: test
 
 demo:
 	./scripts/demo.sh
+
+docker-build:
+	docker compose build
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
 
 clean:
 	rm -rf build
