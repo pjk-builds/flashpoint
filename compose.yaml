@@ -2,6 +2,8 @@ services:
   flashpoint:
     build: .
     restart: unless-stopped
+    networks:
+      - app
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -14,3 +16,8 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+
+networks:
+  app:
+    name: ${FLASHPOINT_NETWORK:-flashpoint_default}
+    external: ${FLASHPOINT_NETWORK_EXTERNAL:-false}

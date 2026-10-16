@@ -75,6 +75,19 @@ make docker-down
 
 The current service stores inventory and idempotency state in memory. Recreating the container resets that state; persistent storage is part of the PostgreSQL milestone.
 
+## Private Prometheus integration
+
+Flashpoint exposes `/metrics` for Prometheus. Keep that endpoint private by placing the service and Prometheus on an internal Docker network. On the home server, copy `.env.example` to `.env` and then add this scrape job to the Prometheus configuration:
+
+```yaml
+- job_name: flashpoint
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["flashpoint:8080"]
+```
+
+Restart the monitoring stack and verify the `flashpoint` target is `UP`. Prometheus should reach the service through Docker DNS; no public port is required.
+
 ## Load testing
 
 Start the service first, then run:
